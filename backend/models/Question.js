@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { resultConnection } from '../config/database.js';
 
 const questionSchema = new mongoose.Schema({
   question: {
@@ -27,6 +28,4 @@ const questionSchema = new mongoose.Schema({
   },
 });
 
-const Question = mongoose.model('Question', questionSchema);
-
-export default Question; 
+export default resultConnection.model('Question', questionSchema); 

@@ -1,9 +1,15 @@
+import { fileURLToPath } from 'url';
+import path from 'path';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import Internship from './models/Internship.js';
 import TestResult from './models/TestResult.js';
+import Payment from './models/Payment.js';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import Question from './models/Question.js';
@@ -11,23 +17,22 @@ import User from './models/User.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
-import path from 'path';
 import SibApiV3Sdk from 'sib-api-v3-sdk';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
+import { formConnection, resultConnection, paymentConnection } from './config/database.js';
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.static(path.join(__dirname, '../frontend/build')));
 
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI;
 
 const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET
+  key_id: 'rzp_test_51O8XqXQO8XqXQ',
+  key_secret: 'O8XqXQO8XqXQO8XqXQO8XqXQO8XqXQO8XqXQ'
 });
 
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
@@ -41,19 +46,7 @@ apiKey.apiKey = process.env.BREVO_API_KEY;
 const brevoTransac = new SibApiV3Sdk.TransactionalEmailsApi();
 const BREVO_SENDER = { email: process.env.BREVO_SENDER_EMAIL, name: process.env.BREVO_SENDER_NAME || 'Student Portal' };
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const paymentLogsFile = path.join(__dirname, '../logs/payments.json');
-
-mongoose.connect(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-}).then(() => {
-  console.log('MongoDB connected');
-}).catch((err) => {
-  console.error('MongoDB connection error:', err);
-});
 
 // Multer setup for avatar uploads
 const storage = multer.diskStorage({
@@ -70,6 +63,12 @@ const upload = multer({ storage });
 // Serve avatars statically
 app.use('/uploads/avatars', express.static('uploads/avatars'));
 
+// Basic route
+app.get('/', (req, res) => {
+  res.send('Backend is running');
+});
+
+// Internship endpoints
 app.post('/api/internships', async (req, res) => {
   try {
     const data = req.body;
@@ -79,10 +78,6 @@ app.post('/api/internships', async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, message: 'Error saving application', error: err.message });
   }
-});
-
-app.get('/', (req, res) => {
-  res.send('Backend is running');
 });
 
 app.get('/api/internships', async (req, res) => {
@@ -219,137 +214,6 @@ app.post('/api/test/submit', async (req, res) => {
   }
 });
 
-// Create Razorpay Order
-app.post('/create-order', async (req, res) => {
-  try {
-    const { amount, currency, customerInfo } = req.body;
-    
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ valid: false, error: 'Invalid amount provided' });
-    }
-
-    const orderOptions = {
-      amount: amount * 100, // Convert to paise
-      currency: currency || 'INR',
-      receipt: `receipt_${Date.now()}`
-    };
-
-    const order = await razorpay.orders.create(orderOptions);
-    
-    res.json({
-      success: true,
-      order: {
-        id: order.id,
-        amount: order.amount,
-        currency: order.currency
-      }
-    });
-
-  } catch (error) {
-    console.error('Error creating order:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to create order'
-    });
-  }
-});
-
-app.post('/verify-payment', async (req, res) => {
-  try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, email } = req.body;
-    
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-      return res.status(400).json({ success: false, error: 'Missing payment verification parameters' });
-    }
-
-    const body = razorpay_order_id + "|" + razorpay_payment_id;
-
-    const expectedSignature = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-      .update(body.toString())
-      .digest('hex');
-
-    if (expectedSignature === razorpay_signature) {
-      // Update user payment status if email is provided
-      if (email) {
-        const user = await User.findOne({ email });
-        if (user) {
-          user.hasPaid = true;
-          await user.save();
-        }
-      }
-      res.json({ success: true, message: 'Payment verified successfully' });
-    } else {
-      res.status(400).json({ success: false, error: 'Payment verification failed' });
-    }
-  } catch (error) {
-    console.error('Error verifying payment:', error);
-    res.status(500).json({ success: false, error: 'Error verifying payment' });
-  }
-});
-
-app.post('/api/test-results', async (req, res) => {
-  try {
-    const {
-      studentName,
-      email,
-      score,
-      totalQuestions,
-      attemptsUsed,
-      totalAttempts,
-      paymentId,
-      orderId,
-      timeTaken,
-      startedOn,
-      completedOn,
-      questions,
-      domain
-    } = req.body;
-
-    if (!studentName || !email || score === undefined || !totalQuestions) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required test data'
-      });
-    }
-
-    const percentage = Math.round((score / totalQuestions) * 100);
-    
-    const testData = {
-      studentName,
-      email,
-      score,
-      totalQuestions,
-      percentage,
-      attemptsUsed: attemptsUsed || 1,
-      totalAttempts: totalAttempts || 3,
-      paymentId,
-      orderId,
-      timeTaken,
-      startedOn: startedOn ? new Date(startedOn) : new Date(),
-      completedOn: completedOn ? new Date(completedOn) : new Date(),
-      questions: questions || [],
-      domain: domain || ''
-    };
-
-    const newTestResult = new TestResult(testData);
-    const savedResult = await newTestResult.save();
-    
-    res.status(201).json({
-      success: true,
-      message: 'Test result saved successfully',
-      record: savedResult
-    });
-  } catch (err) {
-    console.error('Error saving test result:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error saving test result', 
-      error: err.message 
-    });
-  }
-});
-
 // Admin login endpoint
 app.post('/api/admin/login', (req, res) => {
   const { username, password } = req.body;
@@ -375,17 +239,10 @@ function requireAdminAuth(req, res, next) {
   }
 }
 
-// Protect test results endpoint
-const originalTestResultsHandler = app._router.stack.find(r => r.route && r.route.path === '/api/test-results' && r.route.methods.get);
-if (originalTestResultsHandler) {
-  const originalHandler = originalTestResultsHandler.route.stack[0].handle;
-  app._router.stack = app._router.stack.filter(r => !(r.route && r.route.path === '/api/test-results' && r.route.methods.get));
-  app.get('/api/test-results', requireAdminAuth, originalHandler);
-}
-
-app.get('/api/test-results', async (req, res) => {
+// Get test results (admin only)
+app.get('/api/test-results', requireAdminAuth, async (req, res) => {
   try {
-    const testResults = await TestResult.find().sort({ testDate: -1 });
+    const testResults = await TestResult.find().sort({ createdAt: -1 });
     res.json({
       success: true,
       records: testResults,
@@ -401,157 +258,69 @@ app.get('/api/test-results', async (req, res) => {
   }
 });
 
-app.get('/api/test-results/:id', async (req, res) => {
+// Get payment history (admin only)
+app.get('/api/payments', requireAdminAuth, async (req, res) => {
   try {
-    const testResult = await TestResult.findById(req.params.id);
-    if (!testResult) {
-      return res.status(404).json({
-        success: false,
-        message: 'Test result not found'
-      });
-    }
+    const { page = 1, limit = 50, status, email } = req.query;
+    const skip = (page - 1) * limit;
 
-    // Always set totalAttempts to 5
-    testResult.totalAttempts = 5;
+    // Build filter
+    const filter = {};
+    if (status) filter.status = status;
+    if (email) filter.customerEmail = { $regex: email, $options: 'i' };
 
-    // Fetch all original questions to get options
-    const questionTexts = testResult.questions.map(q => q.question);
-    const originalQuestions = await Question.find({ question: { $in: questionTexts } });
-    const optionsMap = {};
-    originalQuestions.forEach(q => {
-      optionsMap[q.question] = q.options;
-    });
+    // Get payments with pagination
+    const payments = await Payment.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
 
-    // Merge options into each result question
-    const questionsWithOptions = testResult.questions.map(q => ({
-      ...q._doc ? q._doc : q,
-      options: optionsMap[q.question] ? Object.fromEntries(optionsMap[q.question]) : undefined
-    }));
+    // Get total count
+    const total = await Payment.countDocuments(filter);
 
-    // Return the modified result
+    // Calculate statistics
+    const stats = await Payment.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          totalPayments: { $sum: 1 },
+          totalAmount: { $sum: '$amount' },
+          successfulPayments: {
+            $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] }
+          },
+          failedPayments: {
+            $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] }
+          },
+          pendingPayments: {
+            $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] }
+          }
+        }
+      }
+    ]);
+
     res.json({
       success: true,
-      record: {
-        ...testResult._doc ? testResult._doc : testResult,
-        totalAttempts: 5,
-        questions: questionsWithOptions
+      payments,
+      total,
+      page: parseInt(page),
+      totalPages: Math.ceil(total / limit),
+      stats: stats[0] || {
+        totalPayments: 0,
+        totalAmount: 0,
+        successfulPayments: 0,
+        failedPayments: 0,
+        pendingPayments: 0
       }
     });
+
   } catch (err) {
-    console.error('Error fetching test result:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching test result', 
-      error: err.message 
+    console.error('Error fetching payment history:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching payment history',
+      error: err.message
     });
-  }
-});
-
-// Get attempts by email
-app.get('/api/attempts/:email', async (req, res) => {
-  try {
-    const { email } = req.params;
-    const totalAttempts = 5; // As per requirement
-    
-    if (!email) {
-      return res.status(400).json({ success: false, error: 'Email is required' });
-    }
-
-    const attemptsUsed = await TestResult.countDocuments({ email: email });
-    const remainingAttempts = Math.max(0, totalAttempts - attemptsUsed);
-    const user = await User.findOne({ email });
-    const paymentStatus = user && user.hasPaid ? 'Paid' : 'Not Paid';
-    
-    res.json({
-      success: true,
-      attemptsUsed,
-      totalAttempts,
-      remainingAttempts,
-      paymentStatus
-    });
-  } catch (err) {
-    console.error('Error fetching attempts:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error fetching attempts', 
-      error: err.message 
-    });
-  }
-});
-
-// Get user profile by email
-app.get('/api/user/:email', async (req, res) => {
-  try {
-    const { email } = req.params;
-    if (!email) return res.status(400).json({ success: false, message: 'Email is required' });
-    const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-    const { password, verificationCode, resetCode, resetCodeExpires, ...safeUser } = user.toObject();
-    res.json({ success: true, user: { ...safeUser, paymentStatus: user.hasPaid ? 'Paid' : 'Not Paid' } });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error checking user', error: err.message });
-  }
-});
-
-// Create or update user profile
-app.post('/api/user', upload.single('avatar'), async (req, res) => {
-  try {
-    const { name, email, phone, education, experience, skills, message, domain } = req.body;
-    if (!name || !email) {
-      return res.status(400).json({ success: false, message: 'Name and email are required' });
-    }
-    let user = await User.findOne({ email });
-    let avatarUrl = user && user.avatarUrl;
-    if (req.file) {
-      avatarUrl = `/uploads/avatars/${req.file.filename}`;
-    }
-    if (user) {
-      user.name = name;
-      user.phone = phone;
-      user.education = education;
-      user.experience = experience;
-      user.skills = skills;
-      user.message = message;
-      user.domain = domain;
-      if (avatarUrl) user.avatarUrl = avatarUrl;
-      user.updatedAt = new Date();
-      await user.save();
-    } else {
-      user = new User({ name, email, phone, education, experience, skills, message, domain, avatarUrl });
-      await user.save();
-    }
-    res.json({ success: true, user });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error saving user', error: err.message });
-  }
-});
-
-// Update eligibility status or attempts
-app.patch('/api/user/:email', async (req, res) => {
-  try {
-    const { eligibilityStatus, attemptsUsed, lastTestDate } = req.body;
-    const user = await User.findOne({ email: req.params.email });
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-    if (eligibilityStatus) user.eligibilityStatus = eligibilityStatus;
-    if (typeof attemptsUsed === 'number') user.attemptsUsed = attemptsUsed;
-    if (lastTestDate) user.lastTestDate = new Date(lastTestDate);
-    user.updatedAt = new Date();
-    await user.save();
-    res.json({ success: true, user });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error updating user', error: err.message });
-  }
-});
-
-// Get all test results for a user
-app.get('/api/user/:email/results', async (req, res) => {
-  try {
-    const results = await TestResult.find({ email: req.params.email }).sort({ testDate: -1 });
-    res.json({ success: true, results });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error fetching test results', error: err.message });
   }
 });
 
@@ -644,127 +413,45 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Resend verification code endpoint
-app.post('/api/auth/resend', async (req, res) => {
+// Get user by email
+app.get('/api/user/:email', async (req, res) => {
+  try {
+    const email = decodeURIComponent(req.params.email);
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    res.json({ success: true, user });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Error fetching user', error: err.message });
+  }
+});
+
+// Mark user as paid (called by payment server)
+app.post('/api/mark-paid', async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) {
       return res.status(400).json({ success: false, message: 'Email is required' });
     }
+
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
-    if (user.isVerified) {
-      return res.status(400).json({ success: false, message: 'User already verified' });
-    }
-    // Generate new code and update user
-    const newCode = generateVerificationCode();
-    user.verificationCode = newCode;
-    await user.save();
-    // Send code via email
-    try {
-      await brevoTransac.sendTransacEmail({
-        sender: BREVO_SENDER,
-        to: [{ email, name: user.name }],
-        subject: 'Your Student Portal Verification Code',
-        htmlContent: `<p>Hello ${user.name},</p><p>Your new verification code is: <b>${newCode}</b></p><p>Enter this code to complete your registration.</p>`
-      });
-    } catch (emailErr) {
-      console.error('Error sending verification email:', emailErr);
-      return res.status(500).json({ success: false, message: 'Error sending verification email', error: emailErr.message });
-    }
-    res.json({ success: true, message: 'Verification code resent to your email' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error resending verification code', error: err.message });
-  }
-});
 
-// Request password reset code
-app.post('/api/auth/request-reset-code', async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: 'Email is required' });
-    const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-    const resetCode = generateVerificationCode();
-    user.resetCode = resetCode;
-    user.resetCodeExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
-    await user.save();
-    // Send code via email
-    try {
-      await brevoTransac.sendTransacEmail({
-        sender: BREVO_SENDER,
-        to: [{ email, name: user.name }],
-        subject: 'Your Password Reset Code',
-        htmlContent: `<p>Hello ${user.name},</p><p>Your password reset code is: <b>${resetCode}</b></p><p>This code is valid for 10 minutes.</p>`
-      });
-    } catch (emailErr) {
-      return res.status(500).json({ success: false, message: 'Error sending reset code', error: emailErr.message });
-    }
-    res.json({ success: true, message: 'Reset code sent to your email' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error requesting reset code', error: err.message });
-  }
-});
-
-// Verify reset code
-app.post('/api/auth/verify-reset-code', async (req, res) => {
-  try {
-    const { email, code } = req.body;
-    if (!email || !code) return res.status(400).json({ success: false, message: 'Email and code are required' });
-    const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-    if (!user.resetCode || !user.resetCodeExpires || user.resetCodeExpires < Date.now()) {
-      return res.status(400).json({ success: false, message: 'Reset code expired or not found' });
-    }
-    if (user.resetCode !== code) {
-      return res.status(400).json({ success: false, message: 'Invalid reset code' });
-    }
-    res.json({ success: true, message: 'Code verified' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error verifying code', error: err.message });
-  }
-});
-
-// Update password after code verification
-app.post('/api/auth/update-password', async (req, res) => {
-  try {
-    const { email, code, password } = req.body;
-    if (!email || !code || !password) return res.status(400).json({ success: false, message: 'Email, code, and password are required' });
-    const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-    if (!user.resetCode || !user.resetCodeExpires || user.resetCodeExpires < Date.now()) {
-      return res.status(400).json({ success: false, message: 'Reset code expired or not found' });
-    }
-    if (user.resetCode !== code) {
-      return res.status(400).json({ success: false, message: 'Invalid reset code' });
-    }
-    user.password = await bcrypt.hash(password, 10);
-    user.resetCode = undefined;
-    user.resetCodeExpires = undefined;
-    await user.save();
-    res.json({ success: true, message: 'Password updated successfully' });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error updating password', error: err.message });
-  }
-});
-
-// Mark user as paid
-app.post('/api/mark-paid', async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: 'Email is required' });
-    const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
     user.hasPaid = true;
     await user.save();
+
+    console.log(`✅ User ${email} marked as paid`);
     res.json({ success: true, message: 'User marked as paid' });
   } catch (err) {
+    console.error('Error marking user as paid:', err);
     res.status(500).json({ success: false, message: 'Error marking user as paid', error: err.message });
   }
 });
 
+// Start server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 }); 

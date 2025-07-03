@@ -1,16 +1,31 @@
-require('dotenv').config();
-const express = require('express');
-const Razorpay = require('razorpay');
-const cors = require('cors');
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
-const fetch = require('node-fetch');
+import dotenv from 'dotenv';
+dotenv.config();
+import express from 'express';
+import Razorpay from 'razorpay';
+import cors from 'cors';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import fetchPkg from 'node-fetch';
+import mongoose from 'mongoose';
+import Payment from './models/Payment.js';
+const fetch = fetchPkg.default || fetchPkg;
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
+
+// Connect to MongoDB Atlas
+const MONGODB_URI = 'mongodb+srv://aryanraj9931614200:Aryan00123@cluster0.kzsjydb.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
+
+mongoose.connect(MONGODB_URI)
+  .then(() => {
+    console.log('✅ Connected to MongoDB Atlas for payment server');
+  })
+  .catch((error) => {
+    console.error('❌ Error connecting to MongoDB Atlas:', error);
+  });
 
 // Initialize Razorpay
 const razorpay = new Razorpay({
@@ -19,7 +34,7 @@ const razorpay = new Razorpay({
 });
 
 // Create logs directory if it doesn't exist
-const logsDir = path.join(__dirname, 'logs');
+const logsDir = path.join(path.resolve(), 'logs');
 if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir);
 }
@@ -151,6 +166,47 @@ app.post('/create-order', async (req, res) => {
     
     logPayment(orderLog);
 
+    // Store order creation in database
+    try {
+      // Handle empty customer info
+      let customerEmail = customerInfo?.email;
+      let customerName = customerInfo?.name;
+      
+      if (!customerEmail || customerEmail.trim() === '') {
+        customerEmail = 'customer@example.com';
+      }
+      if (!customerName || customerName.trim() === '') {
+        customerName = 'Customer';
+      }
+      
+      console.log('Order creation - customerEmail:', customerEmail);
+      console.log('Order creation - customerName:', customerName);
+      console.log('Order creation - customerInfo from request:', customerInfo);
+
+      const paymentData = {
+        orderId: order.id,
+        paymentId: `pending_${order.id}`, // Temporary payment ID for pending orders
+        amount: amount,
+        currency: currency,
+        status: 'pending',
+        customerEmail: customerEmail,
+        customerName: customerName,
+        paymentMethod: 'razorpay',
+        receiptId: order.receipt,
+        description: 'YugaYatra Test Fee',
+        razorpayOrder: order
+      };
+
+      // Save directly to MongoDB Atlas
+      const newPayment = new Payment(paymentData);
+      await newPayment.save();
+      
+      console.log('Order creation stored in MongoDB Atlas successfully');
+    } catch (dbError) {
+      console.error('Error storing order creation in MongoDB Atlas:', dbError);
+      // Continue with the flow even if database storage fails
+    }
+
     // Return success response
     res.json({
       success: true,
@@ -220,6 +276,31 @@ app.post('/verify-payment', async (req, res) => {
       
       logPayment(errorLog);
 
+      // Store failed payment in database
+      try {
+        const paymentData = {
+          orderId: razorpay_order_id,
+          paymentId: razorpay_payment_id,
+          amount: 0,
+          currency: 'INR',
+          status: 'failed',
+          customerEmail: req.body.email || 'customer@example.com',
+          customerName: 'Customer',
+          paymentMethod: 'razorpay',
+          receiptId: `receipt_${Date.now()}`,
+          description: 'YugaYatra Test Fee',
+          errorDetails: { reason: 'Signature mismatch' }
+        };
+
+        // Save directly to MongoDB Atlas
+        const newPayment = new Payment(paymentData);
+        await newPayment.save();
+        
+        console.log('Failed payment stored in MongoDB Atlas successfully');
+      } catch (dbError) {
+        console.error('Error storing failed payment in MongoDB Atlas:', dbError);
+      }
+
       return res.status(400).json({
         success: false,
         error: 'Payment verification failed - Invalid signature'
@@ -248,6 +329,70 @@ app.post('/verify-payment', async (req, res) => {
     };
     
     const loggedPayment = logPayment(paymentLog);
+
+    // Store payment record in database
+    try {
+      // Extract email from multiple sources with better priority
+      // Prioritize Razorpay email since it captures the actual email used for payment
+      let customerEmail = null;
+      
+      // First try to get from Razorpay payment details (most reliable)
+      if (paymentDetails && paymentDetails.email) {
+        customerEmail = paymentDetails.email;
+      }
+      
+      // If no Razorpay email, try from request body
+      if (!customerEmail && req.body.email) {
+        customerEmail = req.body.email;
+      }
+      
+      // If still no email, try from order notes
+      if (!customerEmail && paymentDetails && paymentDetails.notes) {
+        customerEmail = paymentDetails.notes.customer_email;
+      }
+      
+      // Final fallback
+      if (!customerEmail) {
+        customerEmail = 'customer@example.com';
+      }
+
+      // Extract customer name from multiple sources
+      let customerName = 'Customer';
+      if (paymentDetails?.notes?.customer_name) {
+        customerName = paymentDetails.notes.customer_name;
+      } else if (req.body.customerInfo?.name) {
+        customerName = req.body.customerInfo.name;
+      }
+
+      console.log('Payment server - Extracted email:', customerEmail);
+      console.log('Payment server - Extracted name:', customerName);
+      console.log('Payment server - Razorpay email:', paymentDetails?.email);
+      console.log('Payment server - Request body email:', req.body.email);
+
+      const paymentData = {
+        orderId: razorpay_order_id,
+        paymentId: razorpay_payment_id,
+        amount: paymentDetails ? paymentDetails.amount / 100 : 0, // Convert from paise to rupees
+        currency: paymentDetails ? paymentDetails.currency : 'INR',
+        status: 'success',
+        customerEmail: customerEmail,
+        customerName: customerName,
+        paymentMethod: 'razorpay',
+        receiptId: paymentDetails?.receipt || `receipt_${Date.now()}`,
+        description: 'YugaYatra Test Fee',
+        razorpayOrder: paymentDetails,
+        razorpayPayment: paymentDetails
+      };
+
+      // Save directly to MongoDB Atlas
+      const newPayment = new Payment(paymentData);
+      await newPayment.save();
+      
+      console.log('Payment record stored in MongoDB Atlas successfully');
+    } catch (dbError) {
+      console.error('Error storing payment in MongoDB Atlas:', dbError);
+      // Continue with the flow even if database storage fails
+    }
 
     console.log('Payment verified successfully:', razorpay_payment_id);
 
@@ -299,16 +444,16 @@ app.post('/verify-payment', async (req, res) => {
 });
 
 // Get payment logs (for admin purposes)
-app.get('/payment-logs', (req, res) => {
+app.get('/payment-logs', async (req, res) => {
   try {
-    const logs = JSON.parse(fs.readFileSync(paymentLogsFile, 'utf8'));
+    const payments = await Payment.find().sort({ createdAt: -1 });
     res.json({
       success: true,
-      logs: logs,
-      total: logs.length
+      logs: payments,
+      total: payments.length
     });
   } catch (error) {
-    console.error('Error reading payment logs:', error);
+    console.error('Error reading payment logs from MongoDB Atlas:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to read payment logs'
@@ -317,18 +462,18 @@ app.get('/payment-logs', (req, res) => {
 });
 
 // Get payment statistics
-app.get('/payment-stats', (req, res) => {
+app.get('/payment-stats', async (req, res) => {
   try {
-    const logs = JSON.parse(fs.readFileSync(paymentLogsFile, 'utf8'));
+    const payments = await Payment.find();
     
     const stats = {
-      totalOrders: logs.filter(log => log.type === 'ORDER_CREATED').length,
-      totalPayments: logs.filter(log => log.type === 'PAYMENT_SUCCESS').length,
-      totalErrors: logs.filter(log => log.type.includes('ERROR')).length,
-      totalAmount: logs
-        .filter(log => log.type === 'PAYMENT_SUCCESS')
-        .reduce((sum, log) => sum + (log.paymentDetails?.amount || 0), 0) / 100, // Convert from paise
-      recentActivity: logs.slice(-10) // Last 10 activities
+      totalOrders: payments.filter(p => p.status === 'pending').length,
+      totalPayments: payments.filter(p => p.status === 'success').length,
+      totalErrors: payments.filter(p => p.status === 'failed').length,
+      totalAmount: payments
+        .filter(p => p.status === 'success')
+        .reduce((sum, p) => sum + (p.amount || 0), 0),
+      recentActivity: payments.slice(-10) // Last 10 activities
     };
     
     res.json({
@@ -336,7 +481,7 @@ app.get('/payment-stats', (req, res) => {
       stats: stats
     });
   } catch (error) {
-    console.error('Error calculating payment stats:', error);
+    console.error('Error calculating payment stats from MongoDB Atlas:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to calculate payment statistics'
@@ -487,19 +632,19 @@ app.get('/internship-applications', async (req, res) => {
 // Get combined admin dashboard data
 app.get('/admin-dashboard', async (req, res) => {
   try {
-    // Get payment logs
-    const paymentLogs = JSON.parse(fs.readFileSync(paymentLogsFile, 'utf8'));
+    // Get payment logs from MongoDB Atlas
+    const payments = await Payment.find().sort({ createdAt: -1 });
     
     // Calculate payment stats
     const paymentStats = {
-      totalOrders: paymentLogs.filter(log => log.type === 'ORDER_CREATED').length,
-      totalPayments: paymentLogs.filter(log => log.type === 'PAYMENT_SUCCESS').length,
-      totalErrors: paymentLogs.filter(log => log.type.includes('ERROR')).length,
-      totalAmount: paymentLogs
-        .filter(log => log.type === 'PAYMENT_SUCCESS')
-        .reduce((sum, log) => sum + (log.paymentDetails?.amount || 0), 0) / 100,
-      recentPayments: paymentLogs
-        .filter(log => log.type === 'PAYMENT_SUCCESS')
+      totalOrders: payments.filter(p => p.status === 'pending').length,
+      totalPayments: payments.filter(p => p.status === 'success').length,
+      totalErrors: payments.filter(p => p.status === 'failed').length,
+      totalAmount: payments
+        .filter(p => p.status === 'success')
+        .reduce((sum, p) => sum + (p.amount || 0), 0),
+      recentPayments: payments
+        .filter(p => p.status === 'success')
         .slice(-5)
         .reverse()
     };
@@ -565,7 +710,7 @@ app.get('/admin-dashboard', async (req, res) => {
         pendingApplications: applications.filter(app => app.status === 'pending').length,
         recentApplications: applications.slice(-5)
       },
-      recentActivity: paymentLogs.slice(-10).reverse()
+      recentActivity: payments.slice(-10).reverse()
     };
     
     res.json({
@@ -573,7 +718,7 @@ app.get('/admin-dashboard', async (req, res) => {
       data: dashboardData
     });
   } catch (error) {
-    console.error('Error fetching admin dashboard data:', error);
+    console.error('Error fetching admin dashboard data from MongoDB Atlas:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch admin dashboard data'
@@ -612,7 +757,8 @@ app.use((error, req, res, next) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
+// Force payment server to use port 3000
+const PORT = 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Payment server running on http://localhost:${PORT}`);
   console.log(`📊 Payment logs: ${paymentLogsFile}`);

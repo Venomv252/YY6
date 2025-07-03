@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { formConnection } from '../config/database.js';
 
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -26,5 +27,4 @@ const userSchema = new mongoose.Schema({
 
 userSchema.index({ email: 1 });
 
-const User = mongoose.model('User', userSchema);
-export default User; 
+export default formConnection.model('User', userSchema); 

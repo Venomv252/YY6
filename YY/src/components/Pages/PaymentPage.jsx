@@ -12,6 +12,10 @@ const PaymentPage = () => {
   const userName = localStorage.getItem('studentName') || '';
   const userEmail = localStorage.getItem('studentEmail') || '';
 
+  // Debug: Log the email being used
+  console.log('PaymentPage - userName:', userName);
+  console.log('PaymentPage - userEmail:', userEmail);
+
   useEffect(() => {
     // Load Razorpay script
     const script = document.createElement('script');
@@ -27,7 +31,7 @@ const PaymentPage = () => {
   const createOrder = async () => {
     try {
       setPaymentStatus('processing');
-      const response = await fetch('http://localhost:5000/create-order', {
+      const response = await fetch('http://localhost:3000/create-order', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -90,7 +94,7 @@ const PaymentPage = () => {
 
   const verifyPayment = async (response) => {
     try {
-      const verifyResponse = await fetch('http://localhost:5000/verify-payment', {
+      const verifyResponse = await fetch('http://localhost:3000/verify-payment', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -152,12 +156,24 @@ const PaymentPage = () => {
                 Click the button below to proceed with the payment of ₹500 for the YugaYatra test.
               </p>
               <div className="space-y-4">
-                <button
-                  onClick={createOrder}
-                  className="w-full px-6 py-3 bg-lavish-gold text-white rounded-lg font-semibold hover:bg-yellow-600 transition-colors duration-300"
-                >
-                  Pay ₹500 & Proceed
-                </button>
+                {userEmail && userEmail.trim() !== '' ? (
+                  <button
+                    onClick={createOrder}
+                    className="w-full px-6 py-3 bg-lavish-gold text-white rounded-lg font-semibold hover:bg-yellow-600 transition-colors duration-300"
+                  >
+                    Pay ₹500 & Proceed
+                  </button>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-red-600 text-sm">Please log in to proceed with payment</p>
+                    <button
+                      onClick={() => navigate('/signin')}
+                      className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors duration-300"
+                    >
+                      Login to Continue
+                    </button>
+                  </div>
+                )}
                 <button
                   onClick={handleGoBack}
                   className="w-full px-6 py-3 bg-gray-200 text-rich-black rounded-lg font-semibold hover:bg-gray-300 transition-colors duration-300"

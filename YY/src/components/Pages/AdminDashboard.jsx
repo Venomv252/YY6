@@ -209,8 +209,10 @@ export default AdminDashboard;
 
 export function AdminTestResults() {
   const [results, setResults] = useState([]);
+  const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState('test-history');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -219,6 +221,8 @@ export function AdminTestResults() {
       navigate('/admin-signin');
       return;
     }
+    
+    // Fetch test results
     fetch('http://localhost:5000/api/test-results', {
       headers: {
         Authorization: 'Bearer ' + token
@@ -237,45 +241,243 @@ export function AdminTestResults() {
         setError('Could not connect to the server.');
         setLoading(false);
       });
+
+    // Fetch payment history
+    fetch('http://localhost:5000/api/payments', {
+      headers: {
+        Authorization: 'Bearer ' + token
+      }
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          setPayments(data.payments || []);
+        }
+      })
+      .catch(err => {
+        console.error('Failed to fetch payments:', err);
+      });
   }, [navigate]);
+
+  const handleLogout = () => {
+    localStorage.removeItem('adminToken');
+    navigate('/admin-signin');
+  };
 
   if (loading) return <div className="p-8">Loading...</div>;
   if (error) return <div className="p-8 text-red-600">{error}</div>;
 
+  const menuItems = [
+    { id: 'test-history', label: 'Test History', icon: '📊' },
+    { id: 'dashboard', label: 'Dashboard', icon: '📈' },
+    { id: 'applications', label: 'Applications', icon: '📝' },
+    { id: 'payments', label: 'Payments', icon: '💰' },
+    { id: 'settings', label: 'Settings', icon: '⚙️' }
+  ];
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'test-history':
+        return (
+          <div>
+            <h1 className="text-2xl font-bold mb-4">Test History</h1>
+            <div className="overflow-x-auto">
+              <table className="min-w-full border">
+                <thead>
+                  <tr className="bg-gray-100">
+                    <th className="p-2 border">Name</th>
+                    <th className="p-2 border">Email</th>
+                    <th className="p-2 border">Domain</th>
+                    <th className="p-2 border">Score</th>
+                    <th className="p-2 border">Percentage</th>
+                    <th className="p-2 border">Time Taken</th>
+                    <th className="p-2 border">Date</th>
+                    <th className="p-2 border">View</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map((r, i) => (
+                    <tr key={r._id || i} className="border-b">
+                      <td className="p-2 border">{r.studentName || r.name || '-'}</td>
+                      <td className="p-2 border">{r.email}</td>
+                      <td className="p-2 border">{r.domain}</td>
+                      <td className="p-2 border">{r.score}/{r.totalQuestions}</td>
+                      <td className="p-2 border">{r.percentage}%</td>
+                      <td className="p-2 border">{Math.floor((r.timeTaken || 0) / 60)}m {(r.timeTaken || 0) % 60}s</td>
+                      <td className="p-2 border">{r.completedOn ? new Date(r.completedOn).toLocaleString() : '-'}</td>
+                      <td className="p-2 border">
+                        <Link to={`/result/${r._id}`} className="text-blue-600 underline">View</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      case 'dashboard':
+        return (
+          <div>
+            <h1 className="text-2xl font-bold mb-4">Dashboard</h1>
+            <p className="text-gray-600">Dashboard content will be displayed here.</p>
+          </div>
+        );
+      case 'applications':
+        return (
+          <div>
+            <h1 className="text-2xl font-bold mb-4">Applications</h1>
+            <p className="text-gray-600">Applications content will be displayed here.</p>
+          </div>
+        );
+      case 'payments':
+        return (
+          <div>
+            <h1 className="text-2xl font-bold mb-4">Payment History</h1>
+            <div className="mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div className="bg-white p-4 rounded-lg shadow">
+                  <h3 className="text-sm font-medium text-gray-500">Total Payments</h3>
+                  <p className="text-2xl font-bold text-gray-900">{payments.length}</p>
+                </div>
+                <div className="bg-white p-4 rounded-lg shadow">
+                  <h3 className="text-sm font-medium text-gray-500">Total Amount</h3>
+                  <p className="text-2xl font-bold text-green-600">
+                    ₹{payments
+                      .filter(p => p.status === 'success')
+                      .reduce((sum, payment) => sum + (payment.amount || 0), 0)}
+                  </p>
+                </div>
+                <div className="bg-white p-4 rounded-lg shadow">
+                  <h3 className="text-sm font-medium text-gray-500">Successful</h3>
+                  <p className="text-2xl font-bold text-green-600">
+                    {payments.filter(p => p.status === 'success').length}
+                  </p>
+                </div>
+                <div className="bg-white p-4 rounded-lg shadow">
+                  <h3 className="text-sm font-medium text-gray-500">Failed/Pending</h3>
+                  <p className="text-2xl font-bold text-red-600">
+                    {payments.filter(p => p.status === 'failed' || p.status === 'pending').length}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full border">
+                <thead>
+                  <tr className="bg-gray-100">
+                    <th className="p-2 border">Order ID</th>
+                    <th className="p-2 border">Payment ID</th>
+                    <th className="p-2 border">Customer</th>
+                    <th className="p-2 border">Amount</th>
+                    <th className="p-2 border">Status</th>
+                    <th className="p-2 border">Date</th>
+                    <th className="p-2 border">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payments.length > 0 ? (
+                    payments.map((payment, i) => (
+                      <tr key={payment._id || i} className="border-b">
+                        <td className="p-2 border">{payment.orderId || '-'}</td>
+                        <td className="p-2 border">{payment.paymentId || '-'}</td>
+                        <td className="p-2 border">
+                          <div>
+                            <div className="font-medium">{payment.customerName || '-'}</div>
+                            <div className="text-sm text-gray-500">{payment.customerEmail || '-'}</div>
+                          </div>
+                        </td>
+                        <td className="p-2 border">₹{payment.amount || 0}</td>
+                        <td className="p-2 border">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            payment.status === 'success' 
+                              ? 'bg-green-100 text-green-800' 
+                              : payment.status === 'failed'
+                              ? 'bg-red-100 text-red-800'
+                              : payment.status === 'pending'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {payment.status || 'Unknown'}
+                          </span>
+                        </td>
+                        <td className="p-2 border">
+                          {payment.createdAt ? new Date(payment.createdAt).toLocaleString() : '-'}
+                        </td>
+                        <td className="p-2 border">
+                          <button 
+                            onClick={() => console.log('Payment details:', payment)}
+                            className="text-blue-600 underline text-sm hover:text-blue-800"
+                          >
+                            View Details
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="7" className="p-4 text-center text-gray-500">
+                        No payment records found
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      case 'settings':
+        return (
+          <div>
+            <h1 className="text-2xl font-bold mb-4">Settings</h1>
+            <p className="text-gray-600">Settings content will be displayed here.</p>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
-    <div className="p-8">
-      <h1 className="text-2xl font-bold mb-4">All Test Results</h1>
-      <div className="overflow-x-auto">
-        <table className="min-w-full border">
-          <thead>
-            <tr className="bg-gray-100">
-              <th className="p-2 border">Name</th>
-              <th className="p-2 border">Email</th>
-              <th className="p-2 border">Domain</th>
-              <th className="p-2 border">Score</th>
-              <th className="p-2 border">Percentage</th>
-              <th className="p-2 border">Time Taken</th>
-              <th className="p-2 border">Date</th>
-              <th className="p-2 border">View</th>
-            </tr>
-          </thead>
-          <tbody>
-            {results.map((r, i) => (
-              <tr key={r._id || i} className="border-b">
-                <td className="p-2 border">{r.studentName || r.name || '-'}</td>
-                <td className="p-2 border">{r.email}</td>
-                <td className="p-2 border">{r.domain}</td>
-                <td className="p-2 border">{r.score}/{r.totalQuestions}</td>
-                <td className="p-2 border">{r.percentage}%</td>
-                <td className="p-2 border">{Math.floor((r.timeTaken || 0) / 60)}m {(r.timeTaken || 0) % 60}s</td>
-                <td className="p-2 border">{r.completedOn ? new Date(r.completedOn).toLocaleString() : '-'}</td>
-                <td className="p-2 border">
-                  <Link to={`/result/${r._id}`} className="text-blue-600 underline">View</Link>
-                </td>
-              </tr>
+    <div className="flex h-screen bg-gray-50">
+      {/* Sidebar */}
+      <div className="w-64 bg-white shadow-lg">
+        <div className="p-6 border-b border-gray-200">
+          <h2 className="text-xl font-bold text-gray-800">Admin Panel</h2>
+        </div>
+        <nav className="mt-6">
+          <div className="px-4 space-y-2">
+            {menuItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={`w-full flex items-center px-4 py-3 text-left rounded-lg transition-colors ${
+                  activeTab === item.id
+                    ? 'bg-blue-100 text-blue-700 border-r-2 border-blue-700'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <span className="mr-3 text-lg">{item.icon}</span>
+                <span className="font-medium">{item.label}</span>
+              </button>
             ))}
-          </tbody>
-        </table>
+          </div>
+        </nav>
+        <div className="absolute bottom-0 w-64 p-4 border-t border-gray-200">
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center px-4 py-3 text-left rounded-lg text-red-600 hover:bg-red-50 transition-colors"
+          >
+            <span className="mr-3">🚪</span>
+            <span className="font-medium">Logout</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 overflow-auto">
+        <div className="p-8">
+          {renderContent()}
+        </div>
       </div>
     </div>
   );

@@ -1,70 +1,47 @@
 import mongoose from 'mongoose';
+import { resultConnection } from '../config/database.js';
 
 const TestResultSchema = new mongoose.Schema({
-  studentName: { 
-    type: String, 
-    required: true 
+  userId: {
+    type: String,
+    required: true
   },
-  email: { 
-    type: String, 
-    required: true 
+  userEmail: {
+    type: String,
+    required: true
   },
-  score: { 
-    type: Number, 
-    required: true 
+  testName: {
+    type: String,
+    required: true
   },
-  totalQuestions: { 
-    type: Number, 
-    required: true 
+  score: {
+    type: Number,
+    required: true
   },
-  percentage: { 
-    type: Number, 
-    required: true 
+  totalQuestions: {
+    type: Number,
+    required: true
   },
-  attemptsUsed: { 
-    type: Number, 
-    default: 1 
+  correctAnswers: {
+    type: Number,
+    required: true
   },
-  totalAttempts: { 
-    type: Number, 
-    default: 3 
+  timeTaken: {
+    type: Number,
+    required: true
   },
-  paymentId: { 
-    type: String 
-  },
-  orderId: { 
-    type: String 
-  },
-  testDate: { 
-    type: Date, 
-    default: Date.now 
-  },
-  timeTaken: { 
-    type: String 
-  },
-  startedOn: { 
-    type: Date 
-  },
-  completedOn: { 
-    type: Date 
-  },
-  questions: [{
+  answers: [{
     question: String,
-    selectedAnswer: String,
+    userAnswer: String,
     correctAnswer: String,
     isCorrect: Boolean
   }],
-  domain: {
-    type: String
-  },
+  completedAt: {
+    type: Date,
+    default: Date.now
+  }
 }, {
   timestamps: true
 });
 
-// Add indexes for better query performance
-TestResultSchema.index({ email: 1 });
-TestResultSchema.index({ testDate: -1 });
-TestResultSchema.index({ paymentId: 1 });
-TestResultSchema.index({ email: 1, testDate: -1 }); // For tracking attempts by email
-
-export default mongoose.model('TestResult', TestResultSchema); 
+export default resultConnection.model('TestResult', TestResultSchema); 
